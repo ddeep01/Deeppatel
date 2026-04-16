@@ -1,17 +1,16 @@
-from src.pipeline.rag_pipeline import rag_pipeline
+from src.pipeline.rag_pipeline import RAGPipeline
 
 if __name__ == "__main__":
+    rag = RAGPipeline()
+
     while True:
-        query = input("\nAsk medical q  uestion: ")
+        query = input("\nEnter question: ")
 
-        if query.lower() == "exit":
-            break
+        result = rag.query(query)
 
-        result = rag_pipeline(query)
-
-        print("\n💡 Answer:")
+        print("\n=== ANSWER ===")
         print(result["answer"])
 
-        print("\n📚 Sources:")
-        for c in result["context"]:
-            print("-", c[:120])
+        print("\n=== SOURCES ===")
+        for s in result["sources"]:
+            print("-", s)

@@ -6,6 +6,7 @@ class Reranker:
 
     def rerank(self, query, docs):
         pairs = [[query, d] for d in docs]
+
         scores = self.model.predict(pairs)
 
         ranked = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
