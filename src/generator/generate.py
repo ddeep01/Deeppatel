@@ -1,6 +1,8 @@
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 import torch
+import os
+from pathlib import Path
 
 
 class Generator:
@@ -18,30 +20,46 @@ class Generator:
             device_map="auto"
         )
 
-        # 🔥 If DPO model → load adapter
+        # =========================
+        # 🔥 LOAD DPO MODEL
+        # =========================
         if model_name is not None and model_name != base_model_name:
-            print(f"🔹 Loading DPO adapter: {model_name}")
-            self.model = PeftModel.from_pretrained(base_model, model_name)
+            BASE_DIR = Path(__file__).resolve().parent.parent.parent
+            model_path = BASE_DIR / model_name
+            model_path = str(model_path)
+
+            print(f"📂 Loading DPO adapter from: {model_path}")
+
+            if not os.path.exists(model_path):
+                raise ValueError(f"❌ Model path not found: {model_path}")
+
+            self.model = PeftModel.from_pretrained(
+                base_model,
+                model_path,
+                local_files_only=True
+            )
         else:
             print("🔹 Using baseline model")
             self.model = base_model
 
     def generate(self, query, context):
         prompt = f"""
-You are a medical assistant.
+You are a medical expert.
 
-STRICT RULES:
-- Answer ONLY from the provided context
-- Do NOT use prior knowledge
-- If answer is not clearly in context → say "I don't know"
+Answer the question in 2–3 short sentences.
+
+Rules:
+- Be concise
+- Do NOT repeat instructions
+- If unsure, say "I don't know"
 
 Context:
-{context}
+{context[:1200]}
 
 Question:
 {query}
 
-Answer:
+Final Answer:
 """
 
         inputs = self.tokenizer(
@@ -53,19 +71,41 @@ Answer:
 
         outputs = self.model.generate(
             **inputs,
-            max_new_tokens=120,
-            temperature=0.2,
-            do_sample=False
+            max_new_tokens=100,
+            do_sample=False,
+            pad_token_id=self.tokenizer.eos_token_id
         )
 
         decoded = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-        if "Answer" in decoded:
-            answer = decoded.split("Answer")[-1].strip(": \n")
+        # =========================
+        # 🔥 EXTRACT ANSWER
+        # =========================
+        if "Final Answer:" in decoded:
+            answer = decoded.split("Final Answer:")[-1]
+        elif "Answer:" in decoded:
+            answer = decoded.split("Answer:")[-1]
         else:
-            answer = decoded.strip()
+            answer = decoded
 
-        if len(answer.split()) < 3:
+        answer = " ".join(answer.strip().split())
+
+        # =========================
+        # 🔥 LIMIT TO 2 SENTENCES
+        # =========================
+        sentences = answer.split(".")
+        answer = ". ".join(sentences[:2]).strip()
+
+        if not answer.endswith("."):
+            answer += "."
+
+        # =========================
+        # 🔥 UNKNOWN HANDLING
+        # =========================
+        if "i don't know" in answer.lower():
+            return "I don't know"
+
+        if len(answer.split()) < 5:
             return "I don't know"
 
         return answer

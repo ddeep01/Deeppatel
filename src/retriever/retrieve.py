@@ -16,7 +16,7 @@ class Retriever:
         self.index = faiss.read_index(str(INDEX_PATH))
         self.df = pd.read_csv(DATA_PATH)
 
-    def search(self, query, top_k=8):  # 🔥 increased top_k
+    def search(self, query, top_k=8):
         q_emb = self.model.encode(
             [query],
             normalize_embeddings=True
@@ -24,6 +24,16 @@ class Retriever:
 
         scores, indices = self.index.search(q_emb, top_k)
 
-        results = self.df.iloc[indices[0]]
+        results = self.df.iloc[indices[0]].copy()
 
-        return results
+        # =========================
+        # 🔥 SMART FILTERING
+        # =========================
+        results = results[
+            (results["answer"].str.len() > 40) &
+            (~results["question"].str.lower().str.contains("which of the following")) &
+            (~results["question"].str.lower().str.contains("true or false")) &
+            (~results["question"].str.lower().str.contains("mcq"))
+        ]
+
+        return results.head(5)

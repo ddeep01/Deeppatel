@@ -5,12 +5,14 @@ from collections import Counter
 import re
 
 from sentence_transformers import SentenceTransformer, util
+from nltk.translate.bleu_score import sentence_bleu
 from src.pipeline.rag_pipeline import RAGPipeline
 
 # =========================
-# LOAD SIMILARITY MODEL
+# LOAD MODELS (LOAD ONCE)
 # =========================
 sim_model = SentenceTransformer("BAAI/bge-base-en-v1.5")
+
 
 # =========================
 # NORMALIZATION
@@ -19,6 +21,7 @@ def normalize(text):
     text = str(text).lower()
     text = re.sub(r"[^\w\s]", "", text)
     return text.strip()
+
 
 # =========================
 # F1 SCORE
@@ -38,14 +41,16 @@ def compute_f1(pred, truth):
 
     return 2 * precision * recall / (precision + recall)
 
+
 # =========================
 # EXACT MATCH
 # =========================
 def exact_match(pred, truth):
     return int(normalize(pred) == normalize(truth))
 
+
 # =========================
-# HALLUCINATION
+# 🔥 IMPROVED HALLUCINATION
 # =========================
 def is_hallucinated(answer, context):
     answer_words = set(normalize(answer).split())
@@ -53,18 +58,29 @@ def is_hallucinated(answer, context):
 
     overlap = len(answer_words & context_words)
 
-    return int(overlap < 3)
+    # relaxed threshold
+    return int(overlap < 5)
+
 
 # =========================
-# SEMANTIC SIMILARITY ⭐
+# SEMANTIC SIMILARITY (FAST)
 # =========================
-def semantic_similarity(pred, truth):
-    emb1 = sim_model.encode(pred, convert_to_tensor=True)
-    emb2 = sim_model.encode(truth, convert_to_tensor=True)
+def semantic_similarity_batch(preds, truths):
+    emb1 = sim_model.encode(preds, convert_to_tensor=True)
+    emb2 = sim_model.encode(truths, convert_to_tensor=True)
 
-    score = util.cos_sim(emb1, emb2)
+    scores = util.cos_sim(emb1, emb2)
 
-    return float(score)
+    # diagonal values
+    return [float(scores[i][i]) for i in range(len(preds))]
+
+
+# =========================
+# BLEU SCORE ⭐ (IMPORTANT)
+# =========================
+def compute_bleu(pred, truth):
+    return sentence_bleu([normalize(truth).split()], normalize(pred).split())
+
 
 # =========================
 # EVALUATE MODEL
@@ -77,35 +93,53 @@ def evaluate_model(model_name, model_path, sample_size=100):
     df = pd.read_csv("data/processed/clean_data.csv")
     df = df.sample(sample_size)
 
-    f1_scores, em_scores, hallucinations, similarities = [], [], [], []
+    preds, truths, contexts = [], [], []
 
+    # -------------------------
+    # RUN MODEL
+    # -------------------------
     for _, row in tqdm(df.iterrows(), total=len(df)):
         question = row["question"]
         ground_truth = row["answer"]
 
         result = rag.query(question)
 
-        pred = result["answer"]
-        context = " ".join(result["sources"])
+        preds.append(result["answer"])
+        truths.append(ground_truth)
+        contexts.append(" ".join(result["sources"]))
 
-        f1_scores.append(compute_f1(pred, ground_truth))
-        em_scores.append(exact_match(pred, ground_truth))
-        hallucinations.append(is_hallucinated(pred, context))
-        similarities.append(semantic_similarity(pred, ground_truth))
+    # -------------------------
+    # METRICS
+    # -------------------------
+    f1_scores = [compute_f1(p, t) for p, t in zip(preds, truths)]
+    em_scores = [exact_match(p, t) for p, t in zip(preds, truths)]
+    hallucinations = [is_hallucinated(p, c) for p, c in zip(preds, contexts)]
+    bleu_scores = [compute_bleu(p, t) for p, t in zip(preds, truths)]
+
+    # 🔥 FAST semantic similarity
+    similarities = semantic_similarity_batch(preds, truths)
 
     return {
         "Model": model_name,
         "F1 Score": sum(f1_scores) / len(f1_scores),
         "Exact Match": sum(em_scores) / len(em_scores),
         "Hallucination Rate": sum(hallucinations) / len(hallucinations),
-        "Semantic Similarity": sum(similarities) / len(similarities)
+        "Semantic Similarity": sum(similarities) / len(similarities),
+        "BLEU Score": sum(bleu_scores) / len(bleu_scores),
     }
+
 
 # =========================
 # PLOT
 # =========================
 def plot_results(df):
-    metrics = ["F1 Score", "Exact Match", "Hallucination Rate", "Semantic Similarity"]
+    metrics = [
+        "F1 Score",
+        "Exact Match",
+        "Hallucination Rate",
+        "Semantic Similarity",
+        "BLEU Score"
+    ]
 
     df.set_index("Model")[metrics].plot(kind="bar")
 
@@ -116,6 +150,7 @@ def plot_results(df):
 
     plt.savefig("evaluation_plot.png")
     plt.show()
+
 
 # =========================
 # MAIN
@@ -146,5 +181,8 @@ def compare():
     plot_results(df_results)
 
 
+# =========================
+# RUN
+# =========================
 if __name__ == "__main__":
     compare()
