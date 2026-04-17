@@ -53,6 +53,8 @@ Rules:
 - Do NOT repeat instructions
 - If unsure, say "I don't know"
 
+Do NOT guess
+
 Context:
 {context[:1200]}
 

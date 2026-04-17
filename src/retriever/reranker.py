@@ -2,10 +2,11 @@ from sentence_transformers import CrossEncoder
 
 class Reranker:
     def __init__(self):
+        print("🔹 Loading Reranker...")
         self.model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
     def rerank(self, query, docs):
-        pairs = [[query, d] for d in docs]
+        pairs = [[query, doc] for doc in docs]
 
         scores = self.model.predict(pairs)
 

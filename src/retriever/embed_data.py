@@ -18,7 +18,7 @@ def generate_embeddings():
 
     df = pd.read_csv(INPUT_PATH)
 
-    model = SentenceTransformer("BAAI/bge-base-en-v1.5")
+    model = SentenceTransformer("BAAI/bge-large-en-v1.5")
 
     embeddings = model.encode(
         df["text"].tolist(),
