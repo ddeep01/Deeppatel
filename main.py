@@ -2,20 +2,28 @@ from src.pipeline.rag_pipeline import RAGPipeline
 
 
 def format_answer(text):
-    # Clean unwanted prompt leakage
+    # Clean unwanted phrases
     bad_phrases = [
         "ONLY from the provided context",
         "Do NOT use prior knowledge",
-        "If answer is not clearly in context"
+        "If answer is not clearly in context",
+        "Final Answer:",
+        "Answer:"
     ]
 
     for phrase in bad_phrases:
         text = text.replace(phrase, "")
 
-    text = text.strip()
+    text = " ".join(text.strip().split())
 
-    # Format into readable paragraph
-    return "\n".join([line.strip() for line in text.split("\n") if line.strip()])
+    # Limit to 2 sentences
+    sentences = text.split(".")
+    text = ". ".join(sentences[:2]).strip()
+
+    if not text.endswith("."):
+        text += "."
+
+    return text
 
 
 if __name__ == "__main__":
@@ -23,13 +31,14 @@ if __name__ == "__main__":
 
     print("\nSelect Model:")
     print("1. Baseline")
-    print("2. DPO (Recommended)")
+    print("2. Final (DPO)")
 
     choice = input("Enter choice (1/2): ")
 
     if choice == "2":
         rag = RAGPipeline(model_name="models/dpo_model")
         print("✅ Using DPO Model")
+
     else:
         rag = RAGPipeline()
         print("✅ Using Baseline Model")

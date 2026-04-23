@@ -3,13 +3,14 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from collections import Counter
 import re
+import time
 
 from sentence_transformers import SentenceTransformer, util
 from nltk.translate.bleu_score import sentence_bleu
 from src.pipeline.rag_pipeline import RAGPipeline
 
 # =========================
-# LOAD MODELS (LOAD ONCE)
+# LOAD MODEL ONCE
 # =========================
 sim_model = SentenceTransformer("BAAI/bge-base-en-v1.5")
 
@@ -50,33 +51,44 @@ def exact_match(pred, truth):
 
 
 # =========================
-# 🔥 IMPROVED HALLUCINATION
+# HALLUCINATION
 # =========================
 def is_hallucinated(answer, context):
     answer_words = set(normalize(answer).split())
     context_words = set(normalize(context).split())
 
     overlap = len(answer_words & context_words)
-
-    # relaxed threshold
     return int(overlap < 5)
 
 
 # =========================
-# SEMANTIC SIMILARITY (FAST)
+# 🔥 GROUNDING SCORE (NEW)
+# =========================
+def grounding_score(answer, context):
+    answer_words = set(normalize(answer).split())
+    context_words = set(normalize(context).split())
+
+    if len(answer_words) == 0:
+        return 0
+
+    overlap = len(answer_words & context_words)
+
+    return overlap / len(answer_words)
+
+
+# =========================
+# SEMANTIC SIMILARITY
 # =========================
 def semantic_similarity_batch(preds, truths):
     emb1 = sim_model.encode(preds, convert_to_tensor=True)
     emb2 = sim_model.encode(truths, convert_to_tensor=True)
 
     scores = util.cos_sim(emb1, emb2)
-
-    # diagonal values
     return [float(scores[i][i]) for i in range(len(preds))]
 
 
 # =========================
-# BLEU SCORE ⭐ (IMPORTANT)
+# BLEU SCORE
 # =========================
 def compute_bleu(pred, truth):
     return sentence_bleu([normalize(truth).split()], normalize(pred).split())
@@ -95,28 +107,43 @@ def evaluate_model(model_name, model_path, sample_size=100):
 
     preds, truths, contexts = [], [], []
 
-    # -------------------------
-    # RUN MODEL
-    # -------------------------
+    f1_scores = []
+    em_scores = []
+    hallucinations = []
+    bleu_scores = []
+    grounding_scores = []
+    latencies = []
+
     for _, row in tqdm(df.iterrows(), total=len(df)):
         question = row["question"]
         ground_truth = row["answer"]
 
+        # =========================
+        # ⏱ LATENCY START
+        # =========================
+        start_time = time.time()
+
         result = rag.query(question)
 
-        preds.append(result["answer"])
+        latency = time.time() - start_time
+        latencies.append(latency)
+
+        pred = result["answer"]
+        context = " ".join(result["sources"])
+
+        preds.append(pred)
         truths.append(ground_truth)
-        contexts.append(" ".join(result["sources"]))
+        contexts.append(context)
 
-    # -------------------------
-    # METRICS
-    # -------------------------
-    f1_scores = [compute_f1(p, t) for p, t in zip(preds, truths)]
-    em_scores = [exact_match(p, t) for p, t in zip(preds, truths)]
-    hallucinations = [is_hallucinated(p, c) for p, c in zip(preds, contexts)]
-    bleu_scores = [compute_bleu(p, t) for p, t in zip(preds, truths)]
+        # =========================
+        # METRICS
+        # =========================
+        f1_scores.append(compute_f1(pred, ground_truth))
+        em_scores.append(exact_match(pred, ground_truth))
+        hallucinations.append(is_hallucinated(pred, context))
+        bleu_scores.append(compute_bleu(pred, ground_truth))
+        grounding_scores.append(grounding_score(pred, context))
 
-    # 🔥 FAST semantic similarity
     similarities = semantic_similarity_batch(preds, truths)
 
     return {
@@ -126,6 +153,8 @@ def evaluate_model(model_name, model_path, sample_size=100):
         "Hallucination Rate": sum(hallucinations) / len(hallucinations),
         "Semantic Similarity": sum(similarities) / len(similarities),
         "BLEU Score": sum(bleu_scores) / len(bleu_scores),
+        "Grounding Score": sum(grounding_scores) / len(grounding_scores),
+        "Latency (sec)": sum(latencies) / len(latencies),
     }
 
 
@@ -138,12 +167,14 @@ def plot_results(df):
         "Exact Match",
         "Hallucination Rate",
         "Semantic Similarity",
-        "BLEU Score"
+        "BLEU Score",
+        "Grounding Score",
+        "Latency (sec)"
     ]
 
     df.set_index("Model")[metrics].plot(kind="bar")
 
-    plt.title("Model Comparison (Baseline vs DPO)")
+    plt.title("Baseline vs LoRA vs DPO")
     plt.ylabel("Score")
     plt.xticks(rotation=0)
     plt.tight_layout()
@@ -163,13 +194,17 @@ def compare():
         "mistralai/Mistral-7B-Instruct-v0.1"
     )
 
+    lora = evaluate_model(
+        "LoRA",
+        "models/lora_model"
+    )
+
     dpo = evaluate_model(
         "DPO",
         "models/dpo_model"
     )
 
-    results.append(baseline)
-    results.append(dpo)
+    results.extend([baseline, lora, dpo])
 
     df_results = pd.DataFrame(results)
 
